@@ -1,0 +1,31 @@
+[Unit]
+Description=LOKRO Server Control Center
+Documentation=file:/opt/lokro-control-center/README.md
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=lokro
+Group=lokro
+WorkingDirectory=/opt/lokro-control-center
+ExecStart=/opt/lokro-control-center/backend/lokro-server
+EnvironmentFile=/opt/lokro-control-center/.env
+Restart=always
+RestartSec=5
+StartLimitBurst=10
+StartLimitIntervalSec=60
+
+# Hardening (keine unnoetigen Rechte, kein Root für den Prozess)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/lokro-control-center/data
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# Umgebungsvariablen aus .env werden durch EnvironmentFile geladen.
+
+[Install]
+WantedBy=multi-user.target

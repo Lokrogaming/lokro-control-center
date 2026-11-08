@@ -23,6 +23,14 @@ ADMIN_EMAIL="${LOKRO_ADMIN_EMAIL:-admin@${DOMAIN}}"
 APP_PORT="${LOKRO_PORT:-8080}"
 APP_HOST="${LOKRO_HOST:-127.0.0.1}"
 
+# Optional: Pterodactyl-Datenbank (MySQL/MariaDB) für späteren SQL-Betrieb.
+# Der Standard-Betrieb nutzt den integrierten JSON-Store (keine externen Treiber nötig).
+PD_DB_HOST="${LOKRO_DB_HOST:-}"
+PD_DB_PORT="${LOKRO_DB_PORT:-3306}"
+PD_DB_NAME="${LOKRO_DB_NAME:-lokro}"
+PD_DB_USER="${LOKRO_DB_USER:-lokro}"
+PD_DB_PASS="${LOKRO_DB_PASS:-}"
+
 NGINX_SITE_AVAILABLE="/etc/nginx/sites-available/${APP_NAME}"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/${APP_NAME}"
 
@@ -108,6 +116,15 @@ if [ ! -f "${ENV_FILE}" ]; then
   sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${DATA_DIR}/lokro.json|" "${ENV_FILE}"
   sed -i "s|^APP_PORT=.*|APP_PORT=${APP_PORT}|" "${ENV_FILE}"
   sed -i "s|^APP_HOST=.*|APP_HOST=${APP_HOST}|" "${ENV_FILE}"
+  # Optional: Pterodactyl-DB Verbindungsdaten (für späteren SQL-Betrieb reserviert).
+  if [ -n "${PD_DB_HOST}" ]; then
+    sed -i "s|^#PTERODACTYL_DB_HOST=.*|PTERODACTYL_DB_HOST=${PD_DB_HOST}|" "${ENV_FILE}"
+    sed -i "s|^#PTERODACTYL_DB_PORT=.*|PTERODACTYL_DB_PORT=${PD_DB_PORT}|" "${ENV_FILE}"
+    sed -i "s|^#PTERODACTYL_DB_NAME=.*|PTERODACTYL_DB_NAME=${PD_DB_NAME}|" "${ENV_FILE}"
+    sed -i "s|^#PTERODACTYL_DB_USER=.*|PTERODACTYL_DB_USER=${PD_DB_USER}|" "${ENV_FILE}"
+    sed -i "s|^#PTERODACTYL_DB_PASS=.*|PTERODACTYL_DB_PASS=${PD_DB_PASS}|" "${ENV_FILE}"
+    log "Pterodactyl-DB Verbindungsdaten in .env hinterlegt (SQL-Treiber muss nachinstalliert werden)."
+  fi
   # Secure-Cookie erst nur aktivieren, wenn ein HTTPS-Zertifikat vorliegt (siehe Certbot-Schritt weiter unten).
   sed -i "s|^COOKIE_SECURE=.*|COOKIE_SECURE=false|" "${ENV_FILE}"
   chown "${APP_USER}:${APP_USER}" "${ENV_FILE}"
