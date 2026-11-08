@@ -1,8 +1,8 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
-	"crypto/pbkdf2"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -57,10 +57,7 @@ func hashPassword(password string, cfg *config.Config) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	hash, err := pbkdf2.Key(sha256.New, password, salt, cfg.PBKDF2Iterations, 32)
-	if err != nil {
-		return "", err
-	}
+	hash := pbkdf2Key(password, salt, cfg.PBKDF2Iterations, 32)
 	return hex.EncodeToString(salt) + "$" + hex.EncodeToString(hash), nil
 }
 
@@ -78,11 +75,40 @@ func verifyPassword(password, encoded string, cfg *config.Config) bool {
 	if err != nil {
 		return false
 	}
-	computed, err := pbkdf2.Key(sha256.New, password, salt, cfg.PBKDF2Iterations, 32)
-	if err != nil {
-		return false
-	}
+	computed := pbkdf2Key(password, salt, cfg.PBKDF2Iterations, 32)
 	return subtle.ConstantTimeCompare(hash, computed) == 1
+}
+
+// pbkdf2Key derives a key using PBKDF2-HMAC-SHA256 (manual implementation for Go < 1.20 compatibility).
+func pbkdf2Key(password string, salt []byte, iterations, keyLen int) []byte {
+	hashLen := sha256.Size
+	numBlocks := (keyLen + hashLen - 1) / hashLen
+
+	var result []byte
+
+	for block := 1; block <= numBlocks; block++ {
+		// U1 = HMAC(password, salt || INT_32_BE(block))
+		mac := hmac.New(sha256.New, []byte(password))
+		mac.Write(salt)
+		mac.Write([]byte{byte(block >> 24), byte(block >> 16), byte(block >> 8), byte(block)})
+		u := mac.Sum(nil)
+		t := make([]byte, len(u))
+		copy(t, u)
+
+		// U_c = HMAC(password, U_{c-1}), XOR into T
+		for c := 2; c <= iterations; c++ {
+			mac = hmac.New(sha256.New, []byte(password))
+			mac.Write(u)
+			u = mac.Sum(nil)
+			for i := range t {
+				t[i] ^= u[i]
+			}
+		}
+
+		result = append(result, t...)
+	}
+
+	return result[:keyLen]
 }
 
 // splitEncoded splits "salt$hash" into the two hex parts.

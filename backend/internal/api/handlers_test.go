@@ -16,7 +16,7 @@ import (
 	"lokro-control-center/backend/internal/models"
 	"lokro-control-center/backend/internal/audit"
 	"lokro-control-center/backend/internal/uptime"
-	"log/slog"
+	"log"
 )
 
 func setupRouter(t *testing.T) (db.Store, *auth.Service, *mux.Router) {
@@ -42,8 +42,8 @@ func setupRouter(t *testing.T) (db.Store, *auth.Service, *mux.Router) {
 		t.Fatal(err)
 	}
 	auditLog := audit.NewLogger(store)
-	uptimeSvc := uptime.NewService(store, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	uptimeSvc := uptime.NewService(store, log.New(io.Discard, "", 0))
+	logger := log.New(io.Discard, "", 0)
 	router := mux.NewRouter()
 	Register(router, store, authSvc, permEngine, auditLog, uptimeSvc, cfg, logger)
 

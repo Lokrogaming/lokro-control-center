@@ -1,3 +1,3 @@
 module lokro-control-center/backend
 
-go 1.27
+go 1.19

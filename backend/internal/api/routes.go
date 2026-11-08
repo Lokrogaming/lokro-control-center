@@ -10,11 +10,11 @@ import (
 	"lokro-control-center/backend/internal/audit"
 	"lokro-control-center/backend/internal/permissions"
 	"lokro-control-center/backend/internal/uptime"
-	"log/slog"
+	"log"
 )
 
 // Register mounts all routes on the stdlib mux router.
-func Register(router *mux.Router, store db.Store, authSvc *auth.Service, permEngine *permissions.Engine, auditLog *audit.Logger, uptimeSvc *uptime.Service, cfg *config.Config, logger *slog.Logger) {
+func Register(router *mux.Router, store db.Store, authSvc *auth.Service, permEngine *permissions.Engine, auditLog *audit.Logger, uptimeSvc *uptime.Service, cfg *config.Config, logger *log.Logger) {
 	// Health (public).
 	router.GET("/health", func(w http.ResponseWriter, r *http.Request) {
 		_ = writeJSON(w, http.StatusOK, ginH{"status": "ok"})

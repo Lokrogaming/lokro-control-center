@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
-	"log/slog"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -28,13 +28,13 @@ type App struct {
 	Audit   *audit.Logger
 	Uptime  *uptime.Service
 	Cfg     *config.Config
-	Logger  *slog.Logger
+	Logger  *log.Logger
 	server  *http.Server
 }
 
 // New builds and wires the application.
 func New(cfg *config.Config) (*App, error) {
-	logger := slog.New(slog.NewJSONHandler(io.Discard, nil))
+	logger := log.New(io.Discard, "", log.LstdFlags)
 
 	store, err := db.NewJSONFileStore(cfg.DatabaseURL)
 	if err != nil {
@@ -84,7 +84,7 @@ func (a *App) Start() error {
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
-	a.Logger.Info("server listening", "address", addr)
+	a.Logger.Printf("server listening address=%s", addr)
 	return a.server.ListenAndServe()
 }
 
@@ -115,7 +115,7 @@ func seedDefaultAdmin(a *App) error {
 	adminPass := os.Getenv("INITIAL_ADMIN_PASSWORD")
 	adminEmail := os.Getenv("INITIAL_ADMIN_EMAIL")
 	if adminUser == "" || adminPass == "" {
-		slog.Warn("no initial admin credentials provided; skipping default admin creation. Set INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD.")
+		log.Printf("no initial admin credentials provided; skipping default admin creation. Set INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD.")
 		return nil
 	}
 
@@ -128,6 +128,6 @@ func seedDefaultAdmin(a *App) error {
 	if err != nil {
 		return err
 	}
-	slog.Info("default super admin created", "username", adminUser)
+	log.Printf("default super admin created username=%s", adminUser)
 	return nil
 }

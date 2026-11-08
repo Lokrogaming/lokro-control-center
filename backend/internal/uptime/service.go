@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log/slog"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -18,7 +18,7 @@ import (
 // Service performs periodic uptime checks and stores results.
 type Service struct {
 	store   db.Store
-	logger  *slog.Logger
+	logger  *log.Logger
 	checks  map[int64]*models.UptimeCheck
 	mu      sync.RWMutex
 	stopCh  chan struct{}
@@ -27,7 +27,7 @@ type Service struct {
 }
 
 // NewService creates an uptime service (not started).
-func NewService(store db.Store, logger *slog.Logger) *Service {
+func NewService(store db.Store, logger *log.Logger) *Service {
 	return &Service{
 		store:   store,
 		logger:  logger,
@@ -49,7 +49,7 @@ func (s *Service) Start() error {
 	}
 	s.running = true
 	go s.run()
-	s.logger.Info("uptime checker started", "checks", len(s.checks))
+	s.logger.Printf("uptime checker started checks=%d", len(s.checks))
 	return nil
 }
 
@@ -63,7 +63,7 @@ func (s *Service) Stop() error {
 	close(s.stopCh)
 	<-s.doneCh
 	s.running = false
-	s.logger.Info("uptime checker stopped")
+	s.logger.Printf("uptime checker stopped")
 	return nil
 }
 
@@ -141,7 +141,7 @@ func (s *Service) performCheck(check *models.UptimeCheck) {
 	}
 
 	if err := s.store.InsertUptimeResult(check.ID, status, responseTime, statusCode, errStr); err != nil {
-		s.logger.Error("failed to store uptime result", "check_id", check.ID, "error", err)
+		s.logger.Printf("failed to store uptime result check_id=%d error=%v", check.ID, err)
 	}
 }
 
@@ -196,4 +196,4 @@ func EnsureURLScheme(url string) string {
 	return url
 }
 
-var _ = slog.Level(0)
+

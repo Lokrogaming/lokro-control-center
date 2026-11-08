@@ -6,8 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -107,17 +106,12 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 // LoggerMiddleware logs incoming requests.
-func LoggerMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+func LoggerMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			next.ServeHTTP(w, r)
-			logger.Info("request",
-				"method", r.Method,
-				"path", r.URL.Path,
-				"ip", r.RemoteAddr,
-				"latency", time.Since(start),
-			)
+			logger.Printf("request method=%s path=%s ip=%s latency=%v", r.Method, r.URL.Path, r.RemoteAddr, time.Since(start))
 		})
 	}
 }
@@ -182,4 +176,3 @@ func RequirePermission(permEngine *permissions.Engine, resource permissions.Reso
 }
 
 var _ = fmt.Sprintf
-var _ = io.Discard
