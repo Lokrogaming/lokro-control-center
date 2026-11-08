@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+###############################################################################
+# LOKRO Server Control Center - Installationsskript
+#
+# Usage: sudo bash install.sh
+#
+# Zielsysteme: Ubuntu 24.04 LTS+, Debian 12+ (x86_64), ohne Docker.
+# Nicht-Docker, idempotent, ueberschreibt keine existierenden Nginx-Konfigs.
+###############################################################################
+set -euo pipefail
+
+# -----------------------------------------------------------------------------
+# Konfiguration (ueber Environment-Variablen ueberschreibbar)
+# -----------------------------------------------------------------------------
+APP_NAME="lokro-control-center"
+APP_USER="lokro"
+APP_DIR="/opt/${APP_NAME}"
+DATA_DIR="${APP_DIR}/data"
+ENV_FILE="${APP_DIR}/.env"
+SERVICE_NAME="${APP_NAME}"
+DOMAIN="${LOKRO_DOMAIN:-server.lokro.dev}"
+ADMIN_EMAIL="${LOKRO_ADMIN_EMAIL:-admin@${DOMAIN}}"
+APP_PORT="${LOKRO_PORT:-8080}"
+APP_HOST="${LOKRO_HOST:-127.0.0.1}"
+
+NGINX_SITE_AVAILABLE="/etc/nginx/sites-available/${APP_NAME}"
+NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/${APP_NAME}"
+
+log()  { echo "[lokro-install] $*"; }
+err()  { echo "[lokro-install] FEHLER: $*" >&2; exit 1; }
+
+# -----------------------------------------------------------------------------
+# 0. Voraussetzungen: Root, unterstütztes OS
+# -----------------------------------------------------------------------------
+if [ "$(id -u)" -ne 0 ]; then
+  err "Dieses Skript muss als root ausgefuehrt werden (sudo bash install.sh)."
+fi
+
+if [ ! -f /etc/os-release ]; then
+  err "/etc/os-release nicht gefunden."
+fi
+# shellcheck disable=SC1091
+. /etc/os-release
+case "${ID:-}" in
+  ubuntu|debian) : ;;
+  *) err "Unterstütztes Betriebssystem erforderlich (Ubuntu/Debian), erkannt: ${ID:-unbekannt}" ;;
+esac
+log "Betriebssystem: ${PRETTY_NAME:-${ID}}"
+
+# -----------------------------------------------------------------------------
+# 1. Abhängigkeiten installieren
+# -----------------------------------------------------------------------------
+log "Aktualisiere Paketquellen und installiere Abhängigkeiten ..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends \
+  golang-go nginx certbot curl ca-certificates openssl
+
+command -v go >/dev/null 2>&1 || err "go konnte nicht installiert werden."
+
+# -----------------------------------------------------------------------------
+# 2. Dedizierter System-Benutzer
+# -----------------------------------------------------------------------------
+if ! id -u "${APP_USER}" >/dev/null 2>&1; then
+  log "Erstelle System-Benutzer '${APP_USER}' ..."
+  useradd --system --create-home --shell /usr/sbin/nologin "${APP_USER}"
+else
+  log "Benutzer '${APP_USER}' existiert bereits."
+fi
+
+# -----------------------------------------------------------------------------
+# 3. Applikation unter /opt/lokro-control-center installieren
+# -----------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+log "Installiere Applikation nach ${APP_DIR} ..."
+mkdir -p "${APP_DIR}"
+# Quellcode kopieren (aus dem Verzeichnis des Installers)
+cp -a "${SCRIPT_DIR}/." "${APP_DIR}/"
+
+# Backend bauen
+log "Baue Go-Backend ..."
+( cd "${APP_DIR}/backend" && go build -o lokro-server ./cmd/server )
+[ -x "${APP_DIR}/backend/lokro-server" ] || err "Backend-Build fehlgeschlagen."
+
+# Frontend-Dist muss vorhanden sein (vorher 'npm run build' in frontend/)
+if [ ! -d "${APP_DIR}/frontend/dist" ]; then
+  err "frontend/dist fehlt. Führen Sie im Entwicklungsverzeichnis 'npm run build' aus, \
+oder legen Sie das gebaute Frontend unter frontend/dist ab."
+fi
+
+# -----------------------------------------------------------------------------
+# 4. Verzeichnisse & Berechtigungen
+# -----------------------------------------------------------------------------
+log "Konfiguriere Verzeichnisse und Berechtigungen ..."
+mkdir -p "${DATA_DIR}"
+chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}"
+chmod 750 "${APP_DIR}"
+chmod 700 "${DATA_DIR}"
+
+# -----------------------------------------------------------------------------
+# 5. Umgebungsdatei (.env) anlegen (nur bei Erstinstallation)
+# -----------------------------------------------------------------------------
+if [ ! -f "${ENV_FILE}" ]; then
+  log "Erstelle initiale .env ..."
+  cp "${APP_DIR}/.env.example" "${ENV_FILE}"
+  SESSION_SECRET="$(openssl rand -hex 32)"
+  sed -i "s|^SESSION_SECRET=.*|SESSION_SECRET=${SESSION_SECRET}|" "${ENV_FILE}"
+  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${DATA_DIR}/lokro.json|" "${ENV_FILE}"
+  sed -i "s|^APP_PORT=.*|APP_PORT=${APP_PORT}|" "${ENV_FILE}"
+  sed -i "s|^APP_HOST=.*|APP_HOST=${APP_HOST}|" "${ENV_FILE}"
+  # Secure-Cookie erst nur aktivieren, wenn ein HTTPS-Zertifikat vorliegt (siehe Certbot-Schritt weiter unten).
+  sed -i "s|^COOKIE_SECURE=.*|COOKIE_SECURE=false|" "${ENV_FILE}"
+  chown "${APP_USER}:${APP_USER}" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+  log ".env erstellt (Session-Secret automatisch generiert)."
+else
+  log ".env existiert bereits - nicht ueberschrieben."
+fi
+
+# -----------------------------------------------------------------------------
+# 6. systemd-Service-Unit
+# -----------------------------------------------------------------------------
+log "Erstelle systemd-Unit ..."
+cp "${APP_DIR}/deploy/systemd/lokro.service.template" "/etc/systemd/system/${SERVICE_NAME}.service"
+sed -i "s|^EnvironmentFile=.*|EnvironmentFile=${ENV_FILE}|" "/etc/systemd/system/${SERVICE_NAME}.service"
+systemctl daemon-reload
+systemctl enable --now "${SERVICE_NAME}"
+log "Service '${SERVICE_NAME}' aktiviert und gestartet."
+
+# Kurze Wartezeit, damit der JSON-Store initialisiert wird
+sleep 2
+
+# -----------------------------------------------------------------------------
+# 7. Nginx Reverse Proxy (existierende Konfigurationen nicht ueberschreiben)
+# -----------------------------------------------------------------------------
+log "Richte Nginx-Reverse-Proxy ein ..."
+if [ ! -f "${NGINX_SITE_AVAILABLE}" ]; then
+  cp "${APP_DIR}/deploy/nginx/lokro.conf.template" "${NGINX_SITE_AVAILABLE}"
+  # Site aktivieren, falls noch nicht geschehen
+  if [ ! -e "${NGINX_SITE_ENABLED}" ]; then
+    ln -s "${NGINX_SITE_AVAILABLE}" "${NGINX_SITE_ENABLED}"
+  fi
+  # Self-Signed Fallback-Zertifikat, damit Nginx auch vor Certbot startet
+  if [ ! -f /etc/ssl/certs/lokro-selfsigned.crt ]; then
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+      -keyout /etc/ssl/certs/lokro-selfsigned.key \
+      -out /etc/ssl/certs/lokro-selfsigned.crt \
+      -subj "/CN=${DOMAIN}" >/dev/null 2>&1 || true
+  fi
+  # Falls Zertifikat noch nicht existiert, verweise Nginx auf das Self-Signed-Zertifikat
+  if [ ! -d "/etc/letsencrypt/live/${DOMAIN}" ] && [ -f /etc/ssl/certs/lokro-selfsigned.crt ]; then
+    sed -i "s|/etc/letsencrypt/live/${DOMAIN}/fullchain.pem|/etc/ssl/certs/lokro-selfsigned.crt|" "${NGINX_SITE_AVAILABLE}"
+    sed -i "s|/etc/letsencrypt/live/${DOMAIN}/privkey.pem|/etc/ssl/certs/lokro-selfsigned.key|" "${NGINX_SITE_AVAILABLE}"
+  fi
+  nginx -t && systemctl reload nginx
+  log "Nginx konfiguriert und neu geladen."
+else
+  log "Nginx-Site existiert bereits unter ${NGINX_SITE_AVAILABLE} - nicht ueberschrieben."
+fi
+
+# -----------------------------------------------------------------------------
+# 8. SSL via Certbot (falls Moeglichkeit besteht)
+# -----------------------------------------------------------------------------
+if [ ! -d "/etc/letsencrypt/live/${DOMAIN}" ]; then
+  log "Versuche, SSL-Zertifikat via Certbot zu beantragen (Domain: ${DOMAIN}) ..."
+  if certbot --nginx -d "${DOMAIN}" --non-interactive --agree-tos \
+     --email "${ADMIN_EMAIL}" --redirect --hsts --staple-ocsp 2>/dev/null; then
+    log "SSL-Zertifikat installiert. Nginx wurde von Certbot neu konfiguriert."
+    systemctl reload nginx
+  else
+    log "WARNUNG: Certbot konnte kein Zertifikat beantragen (Domain evtl. nicht erreichbar)."
+    log "         Die Seite lauft voruebergehend mit dem Self-Signed-Zertifikat bzw. auf HTTP."
+    log "         Führen Sie später erneut aus: certbot --nginx -d ${DOMAIN}"
+  fi
+else
+  log "SSL-Zertifikat existiert bereits."
+fi
+
+# Secure-Cookie aktivieren, wenn HTTPS nun verfügbar ist
+if [ -d "/etc/letsencrypt/live/${DOMAIN}" ] && [ -f "${ENV_FILE}" ]; then
+  if grep -q '^COOKIE_SECURE=false' "${ENV_FILE}"; then
+    sed -i 's|^COOKIE_SECURE=false|COOKIE_SECURE=true|' "${ENV_FILE}"
+    systemctl restart "${SERVICE_NAME}" 2>/dev/null || true
+    log "HTTPS erkannt – COOKIE_SECURE auf true gesetzt und Service neu gestartet."
+  fi
+fi
+
+# -----------------------------------------------------------------------------
+# 9. Fertig
+# -----------------------------------------------------------------------------
+log "------------------------------------------------------------"
+log "Installation abgeschlossen."
+log "Backend:  systemctl status ${SERVICE_NAME}"
+log "Nginx:    ${NGINX_SITE_AVAILABLE}"
+log "Daten:    ${DATA_DIR}/lokro.json"
+log "Umgebung: ${ENV_FILE}"
+log "URL:      https://${DOMAIN}  (nach erfolgreichem Certbot-Lauf)"
+log "------------------------------------------------------------"
