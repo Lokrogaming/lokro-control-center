@@ -194,7 +194,7 @@ copy_payload "${SCRIPT_DIR}" "${APP_DIR}"
 
 # Backend bauen
 log "Baue Go-Backend ..."
-( cd "${APP_DIR}/backend" && go build -o lokro-server ./cmd/server )
+( cd "${APP_DIR}/backend" && go build -buildvcs=false -o lokro-server ./cmd/server )
 [ -x "${APP_DIR}/backend/lokro-server" ] || err "Backend-Build fehlgeschlagen."
 
 # Frontend bauen (wird vom Go-Backend aus frontend/dist ausgeliefert)

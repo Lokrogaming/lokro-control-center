@@ -86,7 +86,7 @@ build_frontend "${APP_DIR}/frontend"
 
 # Backend neu bauen
 log "Baue Go-Backend neu ..."
-( cd "${APP_DIR}/backend" && go build -o lokro-server ./cmd/server )
+( cd "${APP_DIR}/backend" && go build -buildvcs=false -o lokro-server ./cmd/server )
 [ -x "${APP_DIR}/backend/lokro-server" ] || err "Backend-Build fehlgeschlagen."
 
 # Berechtigungen
