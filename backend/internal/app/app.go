@@ -8,15 +8,16 @@ import (
 	"os"
 	"time"
 
+	"lokro-control-center/backend/internal/api"
+	"lokro-control-center/backend/internal/audit"
 	"lokro-control-center/backend/internal/auth"
 	"lokro-control-center/backend/internal/config"
 	"lokro-control-center/backend/internal/db"
-	mux "lokro-control-center/backend/internal/mux"
-	"lokro-control-center/backend/internal/api"
-	"lokro-control-center/backend/internal/audit"
-	"lokro-control-center/backend/internal/permissions"
 	"lokro-control-center/backend/internal/models"
+	mux "lokro-control-center/backend/internal/mux"
+	"lokro-control-center/backend/internal/permissions"
 	"lokro-control-center/backend/internal/uptime"
+	"lokro-control-center/backend/internal/web"
 )
 
 // App holds the wired application.
@@ -56,6 +57,11 @@ func New(cfg *config.Config) (*App, error) {
 
 	router := mux.NewRouter()
 	api.Register(router, store, authSvc, permEngine, auditLogger, uptimeSvc, cfg, logger)
+
+	// Serve the compiled React frontend for every non-API route. The router
+	// only invokes this fallback when no registered route matched, so /api/*
+	// and /health keep their normal handlers.
+	router.SetNotFoundHandler(web.NewFrontend(cfg.FrontendDir, logger))
 
 	// Start uptime checker in background.
 	if err := uptimeSvc.Start(); err != nil {

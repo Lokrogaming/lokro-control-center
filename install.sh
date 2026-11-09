@@ -37,6 +37,42 @@ NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/${APP_NAME}"
 log()  { echo "[lokro-install] $*"; }
 err()  { echo "[lokro-install] FEHLER: $*" >&2; exit 1; }
 
+# Copy the application payload without touching runtime state (.env, data/) or
+# development artefacts (node_modules, local builds, git metadata).
+copy_payload() {
+  local src="$1" dst="$2"
+  mkdir -p "${dst}"
+  tar -C "${src}" \
+    --exclude='./.git' \
+    --exclude='./.env' \
+    --exclude='./data' \
+    --exclude='./node_modules' \
+    --exclude='./frontend/node_modules' \
+    --exclude='./frontend/dist' \
+    --exclude='./backend/lokro-server' \
+    -cf - . | tar -C "${dst}" -xf -
+}
+
+# Build the Vite frontend into frontend/dist. Node.js is only needed here (at
+# build/deploy time); the running service serves the static files via Go.
+build_frontend() {
+  local dir="$1"
+  [ -f "${dir}/package.json" ] || err "frontend/package.json fehlt unter ${dir}."
+  command -v node >/dev/null 2>&1 || err "Node.js fehlt. Installation: apt-get install -y nodejs npm"
+  command -v npm >/dev/null 2>&1 || err "npm fehlt. Installation: apt-get install -y nodejs npm"
+
+  log "Installiere Frontend-Abhaengigkeiten ..."
+  if [ -f "${dir}/package-lock.json" ]; then
+    ( cd "${dir}" && npm ci --no-audit --no-fund )
+  else
+    ( cd "${dir}" && npm install --no-audit --no-fund )
+  fi
+
+  log "Baue Frontend (Vite) ..."
+  ( cd "${dir}" && npm run build )
+  [ -f "${dir}/dist/index.html" ] || err "Frontend-Build fehlgeschlagen: ${dir}/dist/index.html fehlt."
+}
+
 # -----------------------------------------------------------------------------
 # 0. Voraussetzungen: Root, unterstütztes OS
 # -----------------------------------------------------------------------------
@@ -62,9 +98,11 @@ log "Aktualisiere Paketquellen und installiere Abhängigkeiten ..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
-  golang-go nginx certbot curl ca-certificates openssl
+  golang-go nginx certbot curl ca-certificates openssl nodejs npm
 
 command -v go >/dev/null 2>&1 || err "go konnte nicht installiert werden."
+command -v node >/dev/null 2>&1 || err "Node.js konnte nicht installiert werden."
+command -v npm >/dev/null 2>&1 || err "npm konnte nicht installiert werden."
 
 # -----------------------------------------------------------------------------
 # 2. Dedizierter System-Benutzer
@@ -82,19 +120,17 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log "Installiere Applikation nach ${APP_DIR} ..."
 mkdir -p "${APP_DIR}"
-# Quellcode kopieren (aus dem Verzeichnis des Installers)
-cp -a "${SCRIPT_DIR}/." "${APP_DIR}/"
+# Quellcode kopieren (aus dem Verzeichnis des Installers). data/ und .env bleiben
+# bei einer Wiederholung unangetastet.
+copy_payload "${SCRIPT_DIR}" "${APP_DIR}"
 
 # Backend bauen
 log "Baue Go-Backend ..."
 ( cd "${APP_DIR}/backend" && go build -o lokro-server ./cmd/server )
 [ -x "${APP_DIR}/backend/lokro-server" ] || err "Backend-Build fehlgeschlagen."
 
-# Frontend-Dist muss vorhanden sein (vorher 'npm run build' in frontend/)
-if [ ! -d "${APP_DIR}/frontend/dist" ]; then
-  err "frontend/dist fehlt. Führen Sie im Entwicklungsverzeichnis 'npm run build' aus, \
-oder legen Sie das gebaute Frontend unter frontend/dist ab."
-fi
+# Frontend bauen (wird vom Go-Backend aus frontend/dist ausgeliefert)
+build_frontend "${APP_DIR}/frontend"
 
 # -----------------------------------------------------------------------------
 # 4. Verzeichnisse & Berechtigungen

@@ -10,11 +10,16 @@ import (
 
 // Config holds the application configuration loaded from environment variables.
 type Config struct {
-	Env         string
-	Port        string
-	Host        string
-	DatabaseURL string // file path for the JSON store (or DSN for a future SQL driver)
+	Env            string
+	Port           string
+	Host           string
+	DatabaseURL    string // file path for the JSON store (or DSN for a future SQL driver)
 	DatabaseDriver string // "json" (default) or future "sqlite"/"postgres"
+
+	// FrontendDir is the directory containing the compiled Vite build
+	// (index.html + assets/). Relative paths are resolved against the process
+	// working directory (systemd: WorkingDirectory=/opt/lokro-control-center).
+	FrontendDir string
 
 	// Session / Auth
 	SessionSecret   string
@@ -53,16 +58,17 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Env:   getEnv("APP_ENV", "production"),
-		Port:  getEnv("APP_PORT", "8080"),
-		Host:  getEnv("APP_HOST", "0.0.0.0"),
-		DatabaseURL:      getEnv("DATABASE_URL", "/opt/lokro-control-center/data/lokro.json"),
-		DatabaseDriver:   getEnv("DATABASE_DRIVER", "json"),
-		SessionSecret:    getEnv("SESSION_SECRET", ""),
-		SessionDuration:  parseDuration(getEnv("SESSION_DURATION", "24h"), 24*time.Hour),
-		CookieSecure:     getEnv("COOKIE_SECURE", "true") == "true",
-		CookieSameSite:   getEnv("COOKIE_SAMESITE", "Lax"),
-		CookieDomain:     getEnv("COOKIE_DOMAIN", ""),
+		Env:             getEnv("APP_ENV", "production"),
+		Port:            getEnv("APP_PORT", "8080"),
+		Host:            getEnv("APP_HOST", "0.0.0.0"),
+		DatabaseURL:     getEnv("DATABASE_URL", "/opt/lokro-control-center/data/lokro.json"),
+		DatabaseDriver:  getEnv("DATABASE_DRIVER", "json"),
+		FrontendDir:     getEnv("FRONTEND_DIR", "frontend/dist"),
+		SessionSecret:   getEnv("SESSION_SECRET", ""),
+		SessionDuration: parseDuration(getEnv("SESSION_DURATION", "24h"), 24*time.Hour),
+		CookieSecure:    getEnv("COOKIE_SECURE", "true") == "true",
+		CookieSameSite:  getEnv("COOKIE_SAMESITE", "Lax"),
+		CookieDomain:    getEnv("COOKIE_DOMAIN", ""),
 
 		PBKDF2Iterations: parseInt(getEnv("PBKDF2_ITERATIONS", "200000"), 200000),
 
@@ -74,7 +80,7 @@ func Load() (*Config, error) {
 		AnalyticsRetention: parseDuration(getEnv("ANALYTICS_RETENTION", "90d"), 90*24*time.Hour),
 		AnonymizeIP:        getEnv("ANONYMIZE_IP", "true") == "true",
 
-		ServerName:   getEnv("SERVER_NAME", "LOKRO Server Control Center"),
+		ServerName:    getEnv("SERVER_NAME", "LOKRO Server Control Center"),
 		DockerEnabled: getEnv("DOCKER_ENABLED", "false") == "true",
 
 		DiscordWebhookURL: getEnv("DISCORD_WEBHOOK_URL", ""),

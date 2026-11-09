@@ -10,7 +10,8 @@ import (
 // single-segment parameters (e.g. /users/:id). It is intentionally minimal so
 // the application builds with the Go standard library only.
 type Router struct {
-	routes []route
+	routes   []route
+	notFound http.Handler
 }
 
 type route struct {
@@ -33,13 +34,22 @@ func NewRouter() *Router {
 	return &Router{}
 }
 
+// SetNotFoundHandler registers a fallback handler that is invoked when no
+// route matches the request. It is used to serve the SPA for client-side
+// routes while keeping unknown API paths as API responses.
+func (r *Router) SetNotFoundHandler(handler http.Handler) {
+	r.notFound = handler
+}
+
 func (r *Router) Handle(method, path string, handler http.HandlerFunc) {
 	r.routes = append(r.routes, route{method: method, path: cleanPath(path), handler: handler})
 }
 
-func (r *Router) GET(path string, handler http.HandlerFunc)  { r.Handle(http.MethodGet, path, handler) }
-func (r *Router) POST(path string, handler http.HandlerFunc) { r.Handle(http.MethodPost, path, handler) }
-func (r *Router) PUT(path string, handler http.HandlerFunc)  { r.Handle(http.MethodPut, path, handler) }
+func (r *Router) GET(path string, handler http.HandlerFunc) { r.Handle(http.MethodGet, path, handler) }
+func (r *Router) POST(path string, handler http.HandlerFunc) {
+	r.Handle(http.MethodPost, path, handler)
+}
+func (r *Router) PUT(path string, handler http.HandlerFunc) { r.Handle(http.MethodPut, path, handler) }
 func (r *Router) DELETE(path string, handler http.HandlerFunc) {
 	r.Handle(http.MethodDelete, path, handler)
 }
@@ -61,16 +71,18 @@ func cleanPath(p string) string {
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	path := cleanPath(req.URL.Path)
 
-	var matched bool
+	pathMatched := false
+	var allowed []string
 	for _, route := range r.routes {
-		if route.method != req.Method {
-			continue
-		}
 		params, ok := match(route.path, path)
 		if !ok {
 			continue
 		}
-		matched = true
+		pathMatched = true
+		allowed = append(allowed, route.method)
+		if route.method != req.Method {
+			continue
+		}
 		if len(params) > 0 {
 			req = req.WithContext(context.WithValue(req.Context(), paramsKey{}, params))
 		}
@@ -78,8 +90,14 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if matched {
+	if pathMatched {
+		w.Header().Set("Allow", strings.Join(allowed, ", "))
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	if r.notFound != nil {
+		r.notFound.ServeHTTP(w, req)
 		return
 	}
 	http.NotFound(w, req)

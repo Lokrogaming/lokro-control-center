@@ -60,13 +60,28 @@ Das Installationsskript:
 1. Erkennt das Betriebssystem (Ubuntu/Debian).
 2. Installiert Abhängigkeiten (Go, Nginx, Certbot, …).
 3. Legt den System-Benutzer `lokro` an.
-4. Kopiert die Applikation nach `/opt/lokro-control-center` und baut das Backend.
+4. Kopiert die Applikation nach `/opt/lokro-control-center` und baut Backend **und** Frontend
+   (`npm ci` + `vite build` → `frontend/dist`).
 5. Legt Verzeichnisse und Berechtigungen an (750/700, unprivilegiert).
 6. Erstellt `.env` aus `.env.example` (Session-Secret wird automatisch generiert).
 7. Erzeugt die systemd-Unit und startet den Dienst.
 8. Legt die Nginx-Reverse-Proxy-Konfiguration an (existierende Konfigs werden **nicht** überschrieben).
 9. Beantragt ein Let's-Encrypt-Zertifikat via Certbot (falls die Domain erreichbar ist).
 10. Richtet den initialen Super-Admin über Umgebungsvariablen `INITIAL_ADMIN_USERNAME` / `INITIAL_ADMIN_PASSWORD` ein.
+
+### Frontend-Auslieferung
+
+Das Go-Backend liefert den kompilierten Vite-Build selbst aus; Nginx bleibt ein
+reiner Reverse-Proxy. Das Build-Verzeichnis ist über `FRONTEND_DIR` konfigurierbar
+(Standard: `frontend/dist`, relativ zum WorkingDirectory des Service):
+
+- `/` und alle React-Client-Routen (z. B. `/servers/42`) liefern `index.html`.
+- Vorhandene Dateien unter `/assets/` werden direkt ausgeliefert (mit langem
+  Cache für die gehashten Dateinamen).
+- Fehlende Dateien mit Endung liefern `404` statt fälschlich `index.html`.
+- `/api/*` und `/health` werden ausschließlich vom Go-Router verarbeitet und
+  niemals vom SPA-Fallback abgefangen.
+- Directory Traversal (auch über Symlinks) wird abgewiesen.
 
 ### Initialer Admin-Account
 
@@ -89,7 +104,7 @@ Werden diese nicht gesetzt, wird **kein** Standard-Account erstellt (keine Defau
 |--------|-------|
 | `install.sh` | Vollständige Installation (idempotent) |
 | `uninstall.sh` | Deinstallation (Service, Unit, Nginx-Site, Applikationsverzeichnis) |
-| `update.sh` | Update (Backup → Quellcode kopieren → Backend neu bauen → Neustart) |
+| `update.sh` | Update (Backup → Quellcode kopieren → Frontend + Backend neu bauen → Neustart) |
 | `backup.sh` | Konsistentes Backup von `data/` und `.env` |
 | `restore.sh` | Wiederherstellung aus einem Backup-Archiv |
 
@@ -113,7 +128,7 @@ go vet ./...
 ```bash
 cd frontend
 npm install
-npm run build     # erzeugt frontend/dist (erforderlich für install.sh)
+npm run build     # erzeugt frontend/dist (install.sh/update.sh bauen ebenfalls automatisch)
 npm run lint      # tsc --noEmit
 ```
 

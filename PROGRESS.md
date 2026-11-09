@@ -36,5 +36,5 @@ https://server.lokro.dev (Nginx Reverse Proxy, Let's Encrypt, kein Docker)
 - Backend lauscht nur auf 127.0.0.1:8080 (nicht direkt im Internet).
 - Der Prozess läuft als unprivilegierter Benutzer `lokro` (nicht Root).
 - Bestehende Nginx-Konfigurationen und Uptime Kuma werden nicht angetastet (keine bestehenden Nginx-Konfigurationen werden überschrieben).
-- Frontend muss vor `install.sh` gebaut sein (`npm run build` → frontend/dist).
+- `install.sh`/`update.sh` bauen das Frontend automatisch (`npm ci` + `vite build` → `frontend/dist`); das Go-Backend liefert es inklusive SPA-Fallback aus.
 - Pterodactyl-DB (MySQL/MariaDB) kann über Umgebungsvariablen (`LOKRO_DB_*`) vorbereitet werden; der Standard-Betrieb nutzt den sofort funktionsfähigen JSON-Store ohne externe Treiber.
