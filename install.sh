@@ -238,37 +238,52 @@ if [ ! -f "${ENV_FILE}" ]; then
   # Secure-Cookie erst nur aktivieren, wenn ein HTTPS-Zertifikat vorliegt (siehe Certbot-Schritt weiter unten).
   sed -i "s|^COOKIE_SECURE=.*|COOKIE_SECURE=false|" "${ENV_FILE}"
 
-  # Initiale Admin-Credentials in .env sichern, falls als Umgebungsvariable
-  # an install.sh übergeben (z. B. sudo -E bash install.sh).
-  # Das systemd-Service lädt .env via EnvironmentFile; Go liest sie bei
-  # seedDefaultAdmin beim ersten Start (nur wenn noch kein User existiert).
-  if [ -n "${INITIAL_ADMIN_USERNAME:-}" ]; then
-    if grep -q '^INITIAL_ADMIN_USERNAME=' "${ENV_FILE}"; then
-      sed -i "s|^INITIAL_ADMIN_USERNAME=.*|INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME}|" "${ENV_FILE}"
-    else
-      echo "INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME}" >> "${ENV_FILE}"
-    fi
-  fi
-  if [ -n "${INITIAL_ADMIN_PASSWORD:-}" ]; then
-    if grep -q '^INITIAL_ADMIN_PASSWORD=' "${ENV_FILE}"; then
-      sed -i "s|^INITIAL_ADMIN_PASSWORD=.*|INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}|" "${ENV_FILE}"
-    else
-      echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> "${ENV_FILE}"
-    fi
-  fi
-  if [ -n "${INITIAL_ADMIN_EMAIL:-}" ]; then
-    if grep -q '^INITIAL_ADMIN_EMAIL=' "${ENV_FILE}"; then
-      sed -i "s|^INITIAL_ADMIN_EMAIL=.*|INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}|" "${ENV_FILE}"
-    else
-      echo "INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}" >> "${ENV_FILE}"
-    fi
-  fi
-
   chown "${APP_USER}:${APP_USER}" "${ENV_FILE}"
   chmod 600 "${ENV_FILE}"
   log ".env erstellt (Session-Secret automatisch generiert)."
 else
   log ".env existiert bereits - nicht ueberschrieben."
+fi
+
+# -----------------------------------------------------------------------------
+# 5.5. Initiale Admin-Credentials in .env sicherstellen (wenn übergeben)
+#      Wird bei jedem Lauf geprüft, damit auch bei bestehenden .env ein Admin
+#      nachträglich angelegt werden kann. Das systemd-Service lädt .env via
+#      EnvironmentFile; Go liest die Variablen bei seedDefaultAdmin beim
+#      Service-Start (nur wenn noch kein User existiert).
+# -----------------------------------------------------------------------------
+admin_env_changed=0
+if [ -n "${INITIAL_ADMIN_USERNAME:-}" ]; then
+  if grep -q '^INITIAL_ADMIN_USERNAME=' "${ENV_FILE}"; then
+    sed -i "s|^INITIAL_ADMIN_USERNAME=.*|INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME}|" "${ENV_FILE}"
+  else
+    echo "INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME}" >> "${ENV_FILE}"
+  fi
+  admin_env_changed=1
+fi
+if [ -n "${INITIAL_ADMIN_PASSWORD:-}" ]; then
+  if grep -q '^INITIAL_ADMIN_PASSWORD=' "${ENV_FILE}"; then
+    sed -i "s|^INITIAL_ADMIN_PASSWORD=.*|INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}|" "${ENV_FILE}"
+  else
+    echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> "${ENV_FILE}"
+  fi
+  admin_env_changed=1
+fi
+if [ -n "${INITIAL_ADMIN_EMAIL:-}" ]; then
+  if grep -q '^INITIAL_ADMIN_EMAIL=' "${ENV_FILE}"; then
+    sed -i "s|^INITIAL_ADMIN_EMAIL=.*|INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}|" "${ENV_FILE}"
+  else
+    echo "INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}" >> "${ENV_FILE}"
+  fi
+  admin_env_changed=1
+fi
+
+if [ "${admin_env_changed}" -eq 1 ]; then
+  chown "${APP_USER}:${APP_USER}" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+  log "Initiale Admin-Credentials in ${ENV_FILE} aktualisiert."
+  systemctl restart "${SERVICE_NAME}" 2>/dev/null || true
+  log "Service '${SERVICE_NAME}' neu gestartet (seedDefaultAdmin liest neue Credentials)."
 fi
 
 # -----------------------------------------------------------------------------
