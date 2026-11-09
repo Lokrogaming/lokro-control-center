@@ -3,6 +3,8 @@
 # LOKRO Server Control Center - Installationsskript
 #
 # Usage: sudo bash install.sh
+#        (mit Initial-Admin: sudo -E bash install.sh, nachdem INITIAL_ADMIN_*
+#         Umgebungsvariablen gesetzt wurden)
 #
 # Zielsysteme: Ubuntu 24.04 LTS+, Debian 12+ (x86_64), ohne Docker.
 # Nicht-Docker, idempotent, ueberschreibt keine existierenden Nginx-Konfigs.
@@ -107,6 +109,9 @@ check_remote_update() {
 copy_payload() {
   local src="$1" dst="$2"
   mkdir -p "${dst}"
+  # 'file changed as we read it' Warnings von tar sind harmlos; mit set -e +
+  # pipefail würden sie das Skript jedoch abbrechen, daher temporär ausstellen.
+  set +e
   tar -C "${src}" \
     --exclude='./.git' \
     --exclude='./.env' \
@@ -116,6 +121,7 @@ copy_payload() {
     --exclude='./frontend/dist' \
     --exclude='./backend/lokro-server' \
     -cf - . | tar -C "${dst}" -xf -
+  set -e
 }
 
 # Build the Vite frontend into frontend/dist. Node.js is only needed here (at
@@ -231,6 +237,33 @@ if [ ! -f "${ENV_FILE}" ]; then
   fi
   # Secure-Cookie erst nur aktivieren, wenn ein HTTPS-Zertifikat vorliegt (siehe Certbot-Schritt weiter unten).
   sed -i "s|^COOKIE_SECURE=.*|COOKIE_SECURE=false|" "${ENV_FILE}"
+
+  # Initiale Admin-Credentials in .env sichern, falls als Umgebungsvariable
+  # an install.sh übergeben (z. B. sudo -E bash install.sh).
+  # Das systemd-Service lädt .env via EnvironmentFile; Go liest sie bei
+  # seedDefaultAdmin beim ersten Start (nur wenn noch kein User existiert).
+  if [ -n "${INITIAL_ADMIN_USERNAME:-}" ]; then
+    if grep -q '^INITIAL_ADMIN_USERNAME=' "${ENV_FILE}"; then
+      sed -i "s|^INITIAL_ADMIN_USERNAME=.*|INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME}|" "${ENV_FILE}"
+    else
+      echo "INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME}" >> "${ENV_FILE}"
+    fi
+  fi
+  if [ -n "${INITIAL_ADMIN_PASSWORD:-}" ]; then
+    if grep -q '^INITIAL_ADMIN_PASSWORD=' "${ENV_FILE}"; then
+      sed -i "s|^INITIAL_ADMIN_PASSWORD=.*|INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}|" "${ENV_FILE}"
+    else
+      echo "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD}" >> "${ENV_FILE}"
+    fi
+  fi
+  if [ -n "${INITIAL_ADMIN_EMAIL:-}" ]; then
+    if grep -q '^INITIAL_ADMIN_EMAIL=' "${ENV_FILE}"; then
+      sed -i "s|^INITIAL_ADMIN_EMAIL=.*|INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}|" "${ENV_FILE}"
+    else
+      echo "INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL}" >> "${ENV_FILE}"
+    fi
+  fi
+
   chown "${APP_USER}:${APP_USER}" "${ENV_FILE}"
   chmod 600 "${ENV_FILE}"
   log ".env erstellt (Session-Secret automatisch generiert)."
