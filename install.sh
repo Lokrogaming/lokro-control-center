@@ -37,6 +37,71 @@ NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/${APP_NAME}"
 log()  { echo "[lokro-install] $*"; }
 err()  { echo "[lokro-install] FEHLER: $*" >&2; exit 1; }
 
+# -----------------------------------------------------------------------------
+# 0.5. Automatischer Update-Check vor der Installation
+#      Über GitHub API nach einer neuen Version suchen, herunterladen und
+#      install.sh aus dem neuen Quellcode neu starten.
+#      Steuern über LOKRO_AUTO_UPDATE (1 = an, 0 = aus; Default: an).
+# -----------------------------------------------------------------------------
+check_remote_update() {
+  [ "${LOKRO_AUTO_UPDATE:-1}" = "1" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+
+  local remote_sha installed_sha=""
+  remote_sha="$(curl -fsSL --max-time 15 \
+    "https://api.github.com/repos/Lokrogaming/lokro-control-center/commits/main" 2>/dev/null \
+    | grep -o '"sha": *"[a-z0-9]*"' | head -1 \
+    | sed 's/.*"sha": *"\([a-z0-9]*\)".*/\1/')" || true
+
+  if [ -z "${remote_sha}" ]; then
+    log "Remote-Version konnte nicht ermittelt werden. Fahre mit lokaler Version fort."
+    return 0
+  fi
+
+  if [ -f "${APP_DIR}/.installed_commit" ]; then
+    installed_sha="$(cat "${APP_DIR}/.installed_commit" 2>/dev/null || true)"
+  fi
+
+  # Bereits aktuell – keine Aktion nötig.
+  if [ -n "${installed_sha}" ] && [ "${remote_sha}" = "${installed_sha}" ]; then
+    return 0
+  fi
+
+  if [ -n "${installed_sha}" ]; then
+    log "Neuere Version auf GitHub gefunden (${remote_sha:0:7} vs ${installed_sha:0:7})."
+    log "Lade aktuellen Quellcode herunter und starte install.sh neu ..."
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  # Aufräumen bei normalem Skript-Ende (exec ersetzt den Prozess, dann greift
+  # dieser Trap nicht mehr – was gewollt ist, da der neue Prozess läuft).
+  trap 'rm -rf "${tmp_dir}"' EXIT
+
+  if ! curl -fsSL --max-time 120 \
+    -o "${tmp_dir}/lokro.tar.gz" \
+    "https://github.com/Lokrogaming/lokro-control-center/archive/refs/heads/main.tar.gz"; then
+    log "WARNUNG: Update-Download fehlgeschlagen. Fahre mit lokaler Version fort."
+    trap - EXIT
+    return 0
+  fi
+
+  mkdir -p "${tmp_dir}/lokro-src"
+  if ! tar -xzf "${tmp_dir}/lokro.tar.gz" -C "${tmp_dir}/lokro-src" --strip-components=1; then
+    log "WARNUNG: Update-Archiv konnte nicht entpackt werden. Fahre mit lokaler Version fort."
+    trap - EXIT
+    return 0
+  fi
+
+  # Commit-Stand bereits im Zielverzeichnis merken, damit das neu gestartete
+  # install.sh nicht sofort erneut ein Update erkennt (Endlosschleife vermeiden).
+  echo "${remote_sha}" > "${APP_DIR}/.installed_commit" 2>/dev/null || true
+  chown "${APP_USER}:${APP_USER}" "${APP_DIR}/.installed_commit" 2>/dev/null || true
+
+  log "Neuer Quellcode liegt unter ${tmp_dir}/lokro-src. Starte install.sh neu ..."
+  exec bash "${tmp_dir}/lokro-src/install.sh" "$@"
+}
+
 # Copy the application payload without touching runtime state (.env, data/) or
 # development artefacts (node_modules, local builds, git metadata).
 copy_payload() {
@@ -90,6 +155,9 @@ case "${ID:-}" in
   *) err "Unterstütztes Betriebssystem erforderlich (Ubuntu/Debian), erkannt: ${ID:-unbekannt}" ;;
 esac
 log "Betriebssystem: ${PRETTY_NAME:-${ID}}"
+
+# Vor der eigentlichen Installation auf neuere Version prüfen (ggf. Selbst-Update).
+check_remote_update
 
 # -----------------------------------------------------------------------------
 # 1. Abhängigkeiten installieren
@@ -235,6 +303,20 @@ if [ -d "/etc/letsencrypt/live/${DOMAIN}" ] && [ -f "${ENV_FILE}" ]; then
     sed -i 's|^COOKIE_SECURE=false|COOKIE_SECURE=true|' "${ENV_FILE}"
     systemctl restart "${SERVICE_NAME}" 2>/dev/null || true
     log "HTTPS erkannt – COOKIE_SECURE auf true gesetzt und Service neu gestartet."
+  fi
+fi
+
+# -----------------------------------------------------------------------------
+# Installierten Commit merken für spätere automatische Update-Prüfungen.
+if command -v curl >/dev/null 2>&1; then
+  INSTALLED_SHA="$(curl -fsSL --max-time 15 \
+    "https://api.github.com/repos/Lokrogaming/lokro-control-center/commits/main" 2>/dev/null \
+    | grep -o '"sha": *"[a-z0-9]*"' | head -1 \
+    | sed 's/.*"sha": *"\([a-z0-9]*\)".*/\1/')" || true
+  if [ -n "${INSTALLED_SHA}" ]; then
+    echo "${INSTALLED_SHA}" > "${APP_DIR}/.installed_commit"
+    chown "${APP_USER}:${APP_USER}" "${APP_DIR}/.installed_commit" 2>/dev/null || true
+    log "Installierte Version merken: ${INSTALLED_SHA:0:7}"
   fi
 fi
 
